@@ -97,8 +97,7 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
             uint256 diff = newPayout - b.payout;
             b.token.safeTransferFrom(_msgSender(), address(this), diff);
         } else if (newPayout < b.payout) {
-            uint256 diff = b.payout - newPayout;
-            b.token.safeTransfer(b.creator, diff);
+            revert InvalidPayout();
         }
 
         b.payout = SafeCast.toUint248(newPayout);
