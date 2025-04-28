@@ -21,16 +21,20 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
     error NotCreator();
     error InvalidStateTransition();
     error InvalidRecipient();
+    error InvalidExpiry();
+    error BountyExpired();
 
     /*─────────────── Constants ──────────────────*/
     uint256 public constant MAX_PAYOUT = 1e24; // 1,000,000 tokens (18 dec)
+    uint256 public constant MIN_EXPIRY = 1 days;
+    uint256 public constant MAX_EXPIRY = 30 days;
     bytes4 public constant MODULE_ID = 0x42594e33; // "BN3"
 
     /*─────────────── Data Types ─────────────────*/
     enum Status {
         ACTIVE,
         COMPLETED,
-        CANCELLED
+        EXPIRED
     }
 
     struct Bounty {
@@ -39,11 +43,13 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
         address creator;
         IERC20 token;
         string description;
+        uint256 expiry;
     }
 
     /*─────────────── Storage ─────────────────────*/
     mapping(uint256 => Bounty) private _bounties;
     uint256 public nextBountyId;
+    uint256 public activeBountyCount;
 
     /*─────────────── Events ─────────────────────*/
     event BountyCreated(
@@ -51,7 +57,8 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
         address indexed token,
         uint256 payout,
         string description,
-        address indexed creator
+        address indexed creator,
+        uint256 expiry
     );
     event BountyUpdated(uint256 indexed id, uint256 payout, string description);
     event BountyCompleted(uint256 indexed id, address indexed recipient, address indexed completer);
@@ -64,10 +71,16 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
     }
 
     /*─────────────────── Bounty Logic ──────────────────*/
-    function createBounty(IERC20 token, uint256 payout, string calldata description) external {
+    function createBounty(
+        IERC20 token,
+        uint256 payout,
+        string calldata description,
+        uint256 expiry
+    ) external {
         if (address(token) == address(0)) revert ZeroAddress();
         if (payout == 0 || payout > MAX_PAYOUT) revert InvalidPayout();
         if (bytes(description).length == 0) revert EmptyDescription();
+        if (expiry < block.timestamp + MIN_EXPIRY || expiry > block.timestamp + MAX_EXPIRY) revert InvalidExpiry();
 
         // transfer funds into escrow
         token.safeTransferFrom(_msgSender(), address(this), payout);
@@ -78,16 +91,19 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
             status: Status.ACTIVE,
             creator: _msgSender(),
             token: token,
-            description: description
+            description: description,
+            expiry: expiry
         });
+        activeBountyCount++;
 
-        emit BountyCreated(id, address(token), payout, description, _msgSender());
+        emit BountyCreated(id, address(token), payout, description, _msgSender(), expiry);
     }
 
     function updateBounty(uint256 id, uint256 newPayout, string calldata newDescription) external {
         Bounty storage b = _bounty(id);
         if (b.creator != _msgSender()) revert NotCreator();
         if (b.status != Status.ACTIVE) revert InvalidStateTransition();
+        if (block.timestamp >= b.expiry) revert BountyExpired();
 
         if (newPayout == 0 || newPayout > MAX_PAYOUT) revert InvalidPayout();
         if (bytes(newDescription).length == 0) revert EmptyDescription();
@@ -111,12 +127,13 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
         if (b.status != Status.ACTIVE) revert InvalidStateTransition();
         if (b.creator != _msgSender()) revert NotCreator();
         if (recipient == address(0) || recipient == b.creator) revert InvalidRecipient();
+        if (block.timestamp >= b.expiry) revert BountyExpired();
 
         b.token.safeTransfer(recipient, b.payout);
         b.status = Status.COMPLETED;
+        activeBountyCount--;
         emit BountyCompleted(id, recipient, _msgSender());
     }
-
 
     /*──────────── View Helpers ───────────*/
     function getBounty(uint256 id)
@@ -127,11 +144,59 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
             Status status,
             address creator,
             IERC20 token,
-            string memory description
+            string memory description,
+            uint256 expiry
         )
     {
         Bounty storage b = _bounty(id);
-        return (b.payout, b.status, b.creator, b.token, b.description);
+        return (b.payout, b.status, b.creator, b.token, b.description, b.expiry);
+    }
+
+    function getActiveBounties()
+        external
+        view
+        returns (
+            uint256[] memory ids,
+            uint256[] memory payouts,
+            address[] memory creators,
+            IERC20[] memory tokens,
+            string[] memory descriptions,
+            uint256[] memory expiries
+        )
+    {
+        // First pass: count active bounties
+        uint256 activeCount = 0;
+        for (uint256 i = 0; i < nextBountyId; i++) {
+            Bounty storage b = _bounties[i];
+            if (b.status == Status.ACTIVE && block.timestamp < b.expiry) {
+                activeCount++;
+            }
+        }
+
+        // Initialize arrays with the correct size
+        ids = new uint256[](activeCount);
+        payouts = new uint256[](activeCount);
+        creators = new address[](activeCount);
+        tokens = new IERC20[](activeCount);
+        descriptions = new string[](activeCount);
+        expiries = new uint256[](activeCount);
+
+        // Second pass: fill arrays with active bounty data
+        uint256 index = 0;
+        for (uint256 i = 0; i < nextBountyId; i++) {
+            Bounty storage b = _bounties[i];
+            if (b.status == Status.ACTIVE && block.timestamp < b.expiry) {
+                ids[index] = i;
+                payouts[index] = b.payout;
+                creators[index] = b.creator;
+                tokens[index] = b.token;
+                descriptions[index] = b.description;
+                expiries[index] = b.expiry;
+                index++;
+            }
+        }
+
+        return (ids, payouts, creators, tokens, descriptions, expiries);
     }
 
     /*──────────── Internal Utils ───────────*/
