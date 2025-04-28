@@ -117,15 +117,6 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
         emit BountyCompleted(id, recipient, _msgSender());
     }
 
-    function cancelBounty(uint256 id) external {
-        Bounty storage b = _bounty(id);
-        if (b.status != Status.ACTIVE) revert InvalidStateTransition();
-        if (b.creator != _msgSender()) revert NotCreator();
-
-        b.status = Status.CANCELLED;
-        b.token.safeTransfer(b.creator, b.payout);
-        emit BountyCancelled(id, _msgSender());
-    }
 
     /*──────────── View Helpers ───────────*/
     function getBounty(uint256 id)
