@@ -15,7 +15,7 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
 
     /*─────────────── Custom Errors ───────────────*/
     error ZeroAddress();
-    error InvalidString();
+    error EmptyDescription();
     error InvalidPayout();
     error UnknownBounty();
     error NotCreator();
@@ -38,7 +38,7 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
         Status status;
         address creator;
         IERC20 token;
-        string ipfsHash;
+        string description;
     }
 
     /*─────────────── Storage ─────────────────────*/
@@ -50,10 +50,10 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
         uint256 indexed id,
         address indexed token,
         uint256 payout,
-        string ipfsHash,
+        string description,
         address indexed creator
     );
-    event BountyUpdated(uint256 indexed id, uint256 payout, string ipfsHash);
+    event BountyUpdated(uint256 indexed id, uint256 payout, string description);
     event BountyCompleted(uint256 indexed id, address indexed recipient, address indexed completer);
     event BountyCancelled(uint256 indexed id, address indexed canceller);
 
@@ -64,10 +64,10 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
     }
 
     /*─────────────────── Bounty Logic ──────────────────*/
-    function createBounty(IERC20 token, uint256 payout, string calldata ipfsHash) external {
+    function createBounty(IERC20 token, uint256 payout, string calldata description) external {
         if (address(token) == address(0)) revert ZeroAddress();
         if (payout == 0 || payout > MAX_PAYOUT) revert InvalidPayout();
-        if (bytes(ipfsHash).length == 0) revert InvalidString();
+        if (bytes(description).length == 0) revert EmptyDescription();
 
         // transfer funds into escrow
         token.safeTransferFrom(_msgSender(), address(this), payout);
@@ -78,19 +78,19 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
             status: Status.ACTIVE,
             creator: _msgSender(),
             token: token,
-            ipfsHash: ipfsHash
+            description: description
         });
 
-        emit BountyCreated(id, address(token), payout, ipfsHash, _msgSender());
+        emit BountyCreated(id, address(token), payout, description, _msgSender());
     }
 
-    function updateBounty(uint256 id, uint256 newPayout, string calldata newIpfsHash) external {
+    function updateBounty(uint256 id, uint256 newPayout, string calldata newDescription) external {
         Bounty storage b = _bounty(id);
         if (b.creator != _msgSender()) revert NotCreator();
         if (b.status != Status.ACTIVE) revert InvalidStateTransition();
 
         if (newPayout == 0 || newPayout > MAX_PAYOUT) revert InvalidPayout();
-        if (bytes(newIpfsHash).length == 0) revert InvalidString();
+        if (bytes(newDescription).length == 0) revert EmptyDescription();
 
         // adjust escrow if payout changed
         if (newPayout > b.payout) {
@@ -101,9 +101,9 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
         }
 
         b.payout = SafeCast.toUint248(newPayout);
-        b.ipfsHash = newIpfsHash;
+        b.description = newDescription;
 
-        emit BountyUpdated(id, newPayout, newIpfsHash);
+        emit BountyUpdated(id, newPayout, newDescription);
     }
 
     function completeBounty(uint256 id, address recipient) external nonReentrant {
@@ -136,11 +136,11 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
             Status status,
             address creator,
             IERC20 token,
-            string memory ipfs
+            string memory description
         )
     {
         Bounty storage b = _bounty(id);
-        return (b.payout, b.status, b.creator, b.token, b.ipfsHash);
+        return (b.payout, b.status, b.creator, b.token, b.description);
     }
 
     /*──────────── Internal Utils ───────────*/
@@ -151,7 +151,7 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
 
     /*──────────── Version & Gap ───────────*/
     function version() external pure returns (string memory) {
-        return "v3";
+        return "v1";
     }
 
     uint256[100] private __gap;
