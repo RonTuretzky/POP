@@ -84,6 +84,29 @@ contract BountyManagerPure is Initializable, ReentrancyGuardUpgradeable, Context
         emit BountyCreated(id, address(token), payout, ipfsHash, _msgSender());
     }
 
+    function updateBounty(uint256 id, uint256 newPayout, string calldata newIpfsHash) external {
+        Bounty storage b = _bounty(id);
+        if (b.creator != _msgSender()) revert NotCreator();
+        if (b.status != Status.ACTIVE) revert InvalidStateTransition();
+
+        if (newPayout == 0 || newPayout > MAX_PAYOUT) revert InvalidPayout();
+        if (bytes(newIpfsHash).length == 0) revert InvalidString();
+
+        // adjust escrow if payout changed
+        if (newPayout > b.payout) {
+            uint256 diff = newPayout - b.payout;
+            b.token.safeTransferFrom(_msgSender(), address(this), diff);
+        } else if (newPayout < b.payout) {
+            uint256 diff = b.payout - newPayout;
+            b.token.safeTransfer(b.creator, diff);
+        }
+
+        b.payout = SafeCast.toUint248(newPayout);
+        b.ipfsHash = newIpfsHash;
+
+        emit BountyUpdated(id, newPayout, newIpfsHash);
+    }
+
     function completeBounty(uint256 id, address recipient) external nonReentrant {
         Bounty storage b = _bounty(id);
         if (b.status != Status.ACTIVE) revert InvalidStateTransition();
